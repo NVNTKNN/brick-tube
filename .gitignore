@@ -1,3 +1,12 @@
 *.pak.zip
 bin/
 *.log
+# compiled artifacts (source is tracked; build per HANDOFF)
+proxy/ytproxy
+keyprobe/keyprobe
+ytctl/ytctl
+search/ytsearch
+minui-grid/minui-grid-*
+minui-grid/minui
+minui-grid/include
+**/*.so
