@@ -134,7 +134,10 @@ if [ ! -x "$YTFAST" ] && [ -f "$BIN/ytdlp-onedir.tgz" ]; then
     && log "onedir yt-dlp unpacked to tmpfs"
   busy_off
 fi
-[ -x "$YTFAST" ] && YT="$YTFAST" && log "using onedir yt-dlp"
+# adopt only if it actually runs (a glibc-mismatched build is -x but useless)
+if [ -x "$YTFAST" ] && "$YTFAST" --version >/dev/null 2>&1; then
+  YT="$YTFAST"; log "using onedir yt-dlp"
+fi
 
 LASTQ=""
 while true; do
