@@ -108,9 +108,18 @@ play_video() {
   set_gov conservative
   wifi_ps off
   # Aspect-correct letterbox: the demo sets the display rect to the VIDEO size and
-  # the disp layer stretches to the 4:3 panel. Parse the decoded WxH from the log
-  # and override with a fitted rect over the same FIFO ("set dst_rect: x y w h").
-  VS="$(tail -n +"$MARK" "$LOG" | sed -n 's/.*video decoded width = \([0-9][0-9]*\),height = \([0-9][0-9]*\).*/\1 \2/p' | head -1)"
+  # the disp layer stretches to the 4:3 panel. The "video decoded width" line only
+  # appears when the decoder delivers first frames — SECONDS after "start play" —
+  # so poll for it, then override the demo's rect over the same FIFO.
+  VS=""
+  i=0
+  while [ $i -lt 25 ]; do                      # up to ~10s; audio-only never matches
+    VS="$(tail -n +"$MARK" "$LOG" | sed -n 's/.*video decoded width = \([0-9][0-9]*\),height = \([0-9][0-9]*\).*/\1 \2/p' | head -1)"
+    [ -n "$VS" ] && break
+    kill -0 "$TPID" 2>/dev/null || break
+    sleep 0.4; i=$((i+1))
+  done
+  [ -z "$VS" ] && log "no decoded-size line within 10s; letterbox skipped"
   if [ -n "$VS" ]; then
     set -- $VS; VW=$1; VH=$2
     if [ "$VW" -gt 0 ] && [ "$VH" -gt 0 ]; then
@@ -221,7 +230,7 @@ while true; do
     # android client first: dodges the web client's bot-check/429 on flagged IPs
     # (verified 2026-07-17 from home IP: web=bot-check, android=clean URL) and
     # needs no JS runtime. Default client is the retry if android comes up empty.
-    "$YT" -f "22/18/best[vcodec^=avc1][protocol^=https]" -g --extractor-args "youtube:player_client=android" "https://www.youtube.com/watch?v=$ID" > /tmp/yt_target.txt 2>>"$LOG"
+    "$YT" -f "22/18/best[vcodec^=avc1][protocol^=https]" -g --extractor-args "youtube:player_client=android;player_skip=webpage" "https://www.youtube.com/watch?v=$ID" > /tmp/yt_target.txt 2>>"$LOG"
     if [ ! -s /tmp/yt_target.txt ]; then
       log "android client resolve empty -> default client retry"
       "$YT" -f "22/18/best[vcodec^=avc1][protocol^=https]" -g "https://www.youtube.com/watch?v=$ID" > /tmp/yt_target.txt 2>>"$LOG"
