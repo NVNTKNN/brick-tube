@@ -18,14 +18,21 @@
 #define PANEL_W 1024
 #define PANEL_H 768
 
+__attribute__((constructor)) static void rectfix_init(void)
+{
+    fprintf(stderr, "[rectfix] loaded\n");
+}
+
 int TPlayerSetDisplayRect(void *player, int x, int y, unsigned int w, unsigned int h)
 {
     static int (*real)(void *, int, int, unsigned int, unsigned int) = 0;
     if (!real)
         real = (int (*)(void *, int, int, unsigned int, unsigned int))
             dlsym(RTLD_NEXT, "TPlayerSetDisplayRect");
-    if (!real)
+    if (!real) {
+        fprintf(stderr, "[rectfix] dlsym failed: %s\n", dlerror());
         return -1;
+    }
 
     if (w > 0 && h > 0) {
         unsigned int dw = PANEL_W;
