@@ -11,6 +11,7 @@ YT="$BIN/yt-dlp"; PROXY="$BIN/ytproxy"; KB="$BIN/minui-keyboard"; LIST="$BIN/min
 CTL="$BIN/ytctl"; MSG="$BIN/minui-presenter"
 LOG=/tmp/youtube-pak.log; : > "$LOG"
 FIFO=/tmp/yt_ctl
+SCREEN_W=1024; SCREEN_H=768                    # Brick panel (4:3) — why 16:9 video stretched
 log() { echo "[yt-pak] $*" >> "$LOG"; }
 
 killall -9 ytproxy tplayerdemo minui-presenter 2>/dev/null
@@ -87,6 +88,22 @@ play_video() {
     return 1
   fi
   busy_off                                     # video layer is up; drop the Loading page
+  # Aspect-correct letterbox: the demo sets the display rect to the VIDEO size and
+  # the disp layer stretches to the 4:3 panel. Parse the decoded WxH from the log
+  # and override with a fitted rect over the same FIFO ("set dst_rect: x y w h").
+  VS="$(tail -n +"$MARK" "$LOG" | sed -n 's/.*video decoded width = \([0-9][0-9]*\),height = \([0-9][0-9]*\).*/\1 \2/p' | head -1)"
+  if [ -n "$VS" ]; then
+    set -- $VS; VW=$1; VH=$2
+    if [ "$VW" -gt 0 ] && [ "$VH" -gt 0 ]; then
+      DW=$SCREEN_W; DH=$((SCREEN_W*VH/VW))
+      if [ "$DH" -gt "$SCREEN_H" ]; then DH=$SCREEN_H; DW=$((SCREEN_H*VW/VH)); fi
+      DW=$((DW/2*2)); DH=$((DH/2*2))           # even-align for the disp driver
+      DX=$(( (SCREEN_W-DW)/2 )); DY=$(( (SCREEN_H-DH)/2 ))
+      sleep 0.3                                # let the demo's own rect land first
+      ( echo "set dst_rect: $DX $DY $DW $DH" >&3 ) 2>/dev/null
+      log "letterbox dst_rect: $DX $DY $DW $DH (video ${VW}x${VH})"
+    fi
+  fi
   # keep-awake scoped to playback only (battery)
   touch /tmp/yt_play_alive
   ( while [ -f /tmp/yt_play_alive ]; do echo 1 > /tmp/stay_awake; sleep 2; done ) &
