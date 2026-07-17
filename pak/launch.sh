@@ -25,6 +25,7 @@ log "proxy pid $PROXY_PID"
 TPID=""
 AWAKE_PID=""
 cleanup() {
+  set_gov "$GOV_SAVE"; wifi_ps on
   rm -f /tmp/yt_play_alive
   [ -n "$AWAKE_PID" ] && kill "$AWAKE_PID" 2>/dev/null
   killall minui-presenter 2>/dev/null
@@ -34,6 +35,19 @@ cleanup() {
   log "cleaned up"
 }
 trap cleanup EXIT INT TERM
+
+# --- A133 hardware knobs (write-if-exists; saved + restored on exit) ---
+# Measured 2026-07-17: governor=schedutil (performance/conservative available);
+# iw present; tcp_rmem max already 6MB (left alone); yt-dlp startup is
+# CPU-bound (4.5s warm=cold) so tmpfs copy is useless — governor burst helps.
+GOV_SAVE="$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
+set_gov() {
+  [ -n "$GOV_SAVE" ] || return 0
+  for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    echo "$1" > "$g" 2>/dev/null
+  done
+}
+wifi_ps() { /usr/sbin/iw dev wlan0 set power_save "$1" 2>/dev/null; }
 
 # --- status screens (minui-presenter) ---
 busy()    { killall minui-presenter 2>/dev/null; "$MSG" --message "$1" --timeout -1 >>"$LOG" 2>&1 & }
@@ -89,6 +103,10 @@ play_video() {
     return 1
   fi
   busy_off                                     # video layer is up; drop the Loading page
+  # playback profile: decode is on the VPU — drop CPU clocks, kill WiFi power-save
+  # (PS-mode batching = the classic stream-stutter cause)
+  set_gov conservative
+  wifi_ps off
   # Aspect-correct letterbox: the demo sets the display rect to the VIDEO size and
   # the disp layer stretches to the 4:3 panel. Parse the decoded WxH from the log
   # and override with a fitted rect over the same FIFO ("set dst_rect: x y w h").
@@ -112,6 +130,8 @@ play_video() {
   "$CTL" "$FIFO" "$TPID" "$LOG" /dev/input/event3
   log "ytctl rc=$?"
   rm -f /tmp/yt_play_alive; kill "$AWAKE_PID" 2>/dev/null; AWAKE_PID=""
+  set_gov "$GOV_SAVE"
+  wifi_ps on
   stop_player
   exec 3>&-; rm -f "$FIFO"
   return 0
@@ -145,7 +165,11 @@ while true; do
 
   # 2) search -> id|duration|title lines (flat = fast, no per-video extract)
   busy "Searching: $Q"
+  set_gov performance
+  T0=$(date +%s)
   "$YT" "ytsearch12:$Q" --flat-playlist --no-warnings --print "%(id)s|%(duration_string|)s|%(title).80s" > /tmp/yt_results.txt 2>>"$LOG"
+  log "timing search $(( $(date +%s) - T0 ))s"
+  set_gov "$GOV_SAVE"
   if [ ! -s /tmp/yt_results.txt ]; then
     log "no results"
     notice "No results — check WiFi?" 3
@@ -172,7 +196,11 @@ while true; do
 
     # 4) resolve stream (prefer 720p muxed when it exists, else 360p) -> proxy target
     busy "Loading video..."
+    set_gov performance
+    T0=$(date +%s)
     "$YT" -f "22/18/best[vcodec^=avc1][protocol^=https]" -g "https://www.youtube.com/watch?v=$ID" > /tmp/yt_target.txt 2>>"$LOG"
+    log "timing resolve $(( $(date +%s) - T0 ))s"
+    set_gov "$GOV_SAVE"
     if [ ! -s /tmp/yt_target.txt ]; then
       log "resolve failed"
       notice "Could not load this video" 3

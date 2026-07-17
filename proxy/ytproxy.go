@@ -62,7 +62,10 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	// 256KB chunks (vs io.Copy's 32KB): fewer syscalls and smoother delivery
+	// into the decoder across WiFi jitter on the A53 cores.
+	buf := make([]byte, 256*1024)
+	io.CopyBuffer(w, resp.Body, buf)
 }
 
 func main() {
