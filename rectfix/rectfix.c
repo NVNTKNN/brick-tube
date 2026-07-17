@@ -71,6 +71,39 @@ struct disp_layer_config2 {
     unsigned int channel, layer_id;
 };
 
+/* legacy v1 structs — the vendor blob uses DISP_LAYER_SET_CONFIG (0x47) */
+struct disp_fb_info {
+    unsigned long long addr[3];
+    struct disp_rectsz size[3];
+    unsigned int align[3];
+    int format;       /* enum disp_pixel_format */
+    int color_space;  /* enum disp_color_space */
+    unsigned int trd_right_addr[3];
+    bool pre_multiply;
+    struct disp_rect64 crop;
+    int flags;        /* enum disp_buffer_flags */
+    int scan;         /* enum disp_scan_flags */
+};
+
+struct disp_layer_info {
+    int mode; /* enum disp_layer_mode */
+    unsigned char zorder, alpha_mode, alpha_value;
+    struct disp_rect screen_win;
+    bool b_trd_out;
+    int out_trd_mode; /* enum disp_3d_out_mode */
+    union {
+        unsigned int color;
+        struct disp_fb_info fb;
+    };
+    unsigned int id;
+};
+
+struct disp_layer_config {
+    struct disp_layer_info info;
+    bool enable;
+    unsigned int channel, layer_id;
+};
+
 __attribute__((constructor)) static void rectfix_init(void)
 {
     fprintf(stderr, "[rectfix] loaded (ioctl mode)\n");
@@ -92,8 +125,53 @@ static void fit_rect(long long vw, long long vh, struct disp_rect *win)
     win->height = dh;
 }
 
+#include <string.h>
+#include <fcntl.h>
+
+/* diagnostic: log opens of display/video devices */
+int open64(const char *path, int flags, ...)
+{
+    static int (*real)(const char *, int, ...) = 0;
+    if (!real)
+        real = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, "open64");
+    va_list ap;
+    va_start(ap, flags);
+    unsigned int mode = va_arg(ap, unsigned int);
+    va_end(ap);
+    int fd = real(path, flags, mode);
+    if (path && (strstr(path, "disp") || strstr(path, "video") || strstr(path, "fb")))
+        fprintf(stderr, "[rectfix] open64(%s) = %d\n", path, fd);
+    return fd;
+}
+
+int open(const char *path, int flags, ...)
+{
+    static int (*real)(const char *, int, ...) = 0;
+    if (!real)
+        real = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, "open");
+    va_list ap;
+    va_start(ap, flags);
+    unsigned int mode = va_arg(ap, unsigned int);
+    va_end(ap);
+    int fd = real(path, flags, mode);
+    if (path && (strstr(path, "disp") || strstr(path, "video") || strstr(path, "fb")))
+        fprintf(stderr, "[rectfix] open(%s) = %d\n", path, fd);
+    return fd;
+}
+
 int ioctl(int fd, unsigned long request, ...)
 {
+    /* diagnostic: print each distinct request code once */
+    static unsigned long seen[64];
+    static int nseen = 0;
+    int found = 0;
+    for (int s = 0; s < nseen; s++)
+        if (seen[s] == request) { found = 1; break; }
+    if (!found && nseen < 64) {
+        seen[nseen++] = request;
+        fprintf(stderr, "[rectfix] ioctl fd=%d req=0x%lx\n", fd, request);
+    }
+
     va_list ap;
     va_start(ap, request);
     void *arg = va_arg(ap, void *);
@@ -102,6 +180,36 @@ int ioctl(int fd, unsigned long request, ...)
     static int (*real)(int, unsigned long, ...) = 0;
     if (!real)
         real = (int (*)(int, unsigned long, ...))dlsym(RTLD_NEXT, "ioctl");
+
+    if (request == DISP_LAYER_SET_CONFIG && arg != 0) {
+        unsigned long *ub = (unsigned long *)arg;
+        struct disp_layer_config *cfgs = (struct disp_layer_config *)ub[1];
+        unsigned long count = ub[2];
+        static int logged1 = 0;
+        for (unsigned long i = 0; cfgs != 0 && i < count && i < 16; i++) {
+            struct disp_layer_config *c = &cfgs[i];
+            long long vw = c->info.fb.crop.width >> 32;
+            long long vh = c->info.fb.crop.height >> 32;
+            if (logged1 < 6) {
+                logged1++;
+                fprintf(stderr,
+                    "[rectfix] v1 cfg ch=%u lyr=%u en=%d crop %lldx%lld size %ux%u win (%d,%d %ux%u)\n",
+                    c->channel, c->layer_id, (int)c->enable, vw, vh,
+                    c->info.fb.size[0].width, c->info.fb.size[0].height,
+                    c->info.screen_win.x, c->info.screen_win.y,
+                    c->info.screen_win.width, c->info.screen_win.height);
+            }
+            if (!c->enable || c->channel != 0)
+                continue; /* video/scaler lives on ch0; UI fb is ch1 */
+            if (vw <= 0 || vh <= 0) {
+                vw = c->info.fb.size[0].width;
+                vh = c->info.fb.size[0].height;
+            }
+            if (vw <= 0 || vh <= 0)
+                continue;
+            fit_rect(vw, vh, &c->info.screen_win);
+        }
+    }
 
     if (request == DISP_LAYER_SET_CONFIG2 && arg != 0) {
         unsigned long *ub = (unsigned long *)arg;
