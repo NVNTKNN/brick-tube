@@ -11,7 +11,6 @@ YT="$BIN/yt-dlp"; PROXY="$BIN/ytproxy"; KB="$BIN/minui-keyboard"; LIST="$BIN/min
 CTL="$BIN/ytctl"; MSG="$BIN/minui-presenter"; SEARCH="$BIN/ytsearch"; GRIDBIN="$BIN/minui-grid"
 LOG=/tmp/youtube-pak.log; : > "$LOG"
 FIFO=/tmp/yt_ctl
-SCREEN_W=1024; SCREEN_H=768                    # Brick panel (4:3) — why 16:9 video stretched
 HIST=/mnt/SDCARD/Videos/yt_history.txt         # recent searches, MRU-first, cap 10
 log() { echo "[yt-pak] $*" >> "$LOG"; }
 
@@ -92,7 +91,10 @@ stop_player() {
 play_video() {
   MARK=$(( $(wc -l < "$LOG") + 1 ))
   rm -f "$FIFO"; mkfifo "$FIFO"
-  tplayerdemo "$1" < "$FIFO" >> "$LOG" 2>&1 &
+  # rectfix shim: rewrites the demo's TPlayerSetDisplayRect(video WxH) into an
+  # aspect-fitted centered rect — the stdin "set dst_rect" parser mangles values
+  T0=$(date +%s)
+  LD_PRELOAD=/mnt/SDCARD/Videos/libyt_rectfix.so tplayerdemo "$1" < "$FIFO" >> "$LOG" 2>&1 &
   TPID=$!
   exec 3> "$FIFO"                              # hold the writer so stdin never EOFs
   log "playing pid $TPID"
@@ -102,36 +104,12 @@ play_video() {
     exec 3>&-; rm -f "$FIFO"
     return 1
   fi
+  log "timing prepare $(( $(date +%s) - T0 ))s"  # spawn -> first frames/start play
   busy_off                                     # video layer is up; drop the Loading page
   # playback profile: decode is on the VPU — drop CPU clocks, kill WiFi power-save
   # (PS-mode batching = the classic stream-stutter cause)
   set_gov conservative
   wifi_ps off
-  # Aspect-correct letterbox: the demo sets the display rect to the VIDEO size and
-  # the disp layer stretches to the 4:3 panel. The "video decoded width" line only
-  # appears when the decoder delivers first frames — SECONDS after "start play" —
-  # so poll for it, then override the demo's rect over the same FIFO.
-  VS=""
-  i=0
-  while [ $i -lt 25 ]; do                      # up to ~10s; audio-only never matches
-    VS="$(tail -n +"$MARK" "$LOG" | sed -n 's/.*video decoded width = \([0-9][0-9]*\),height = \([0-9][0-9]*\).*/\1 \2/p' | head -1)"
-    [ -n "$VS" ] && break
-    kill -0 "$TPID" 2>/dev/null || break
-    sleep 0.4; i=$((i+1))
-  done
-  [ -z "$VS" ] && log "no decoded-size line within 10s; letterbox skipped"
-  if [ -n "$VS" ]; then
-    set -- $VS; VW=$1; VH=$2
-    if [ "$VW" -gt 0 ] && [ "$VH" -gt 0 ]; then
-      DW=$SCREEN_W; DH=$((SCREEN_W*VH/VW))
-      if [ "$DH" -gt "$SCREEN_H" ]; then DH=$SCREEN_H; DW=$((SCREEN_H*VW/VH)); fi
-      DW=$((DW/2*2)); DH=$((DH/2*2))           # even-align for the disp driver
-      DX=$(( (SCREEN_W-DW)/2 )); DY=$(( (SCREEN_H-DH)/2 ))
-      sleep 0.3                                # let the demo's own rect land first
-      ( echo "set dst_rect: $DX $DY $DW $DH" >&3 ) 2>/dev/null
-      log "letterbox dst_rect: $DX $DY $DW $DH (video ${VW}x${VH})"
-    fi
-  fi
   # keep-awake scoped to playback only (battery)
   touch /tmp/yt_play_alive
   ( while [ -f /tmp/yt_play_alive ]; do echo 1 > /tmp/stay_awake; sleep 2; done ) &
