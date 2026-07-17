@@ -45,7 +45,7 @@ while true; do
   STATE="$("$LIST" --format text --file /tmp/yt_titles.txt --title "$Q" --write-value state)"; rc=$?
   log "list rc=$rc state=$STATE"
   [ $rc -ne 0 ] && continue          # B/back -> new search
-  IDX="$(printf %s "$STATE" | grep -o '"selected":[0-9]*' | grep -o '[0-9]*')"
+  IDX="$(printf %s "$STATE" | sed -n 's/.*"selected"[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -1)"
   [ -z "$IDX" ] && continue
   ID="$(sed -n "$((IDX+1))p" /tmp/yt_ids.txt)"
   [ -z "$ID" ] && continue
