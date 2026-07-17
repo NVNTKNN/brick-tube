@@ -12,6 +12,7 @@ CTL="$BIN/ytctl"; MSG="$BIN/minui-presenter"
 LOG=/tmp/youtube-pak.log; : > "$LOG"
 FIFO=/tmp/yt_ctl
 SCREEN_W=1024; SCREEN_H=768                    # Brick panel (4:3) — why 16:9 video stretched
+HIST=/mnt/SDCARD/Videos/yt_history.txt         # recent searches, MRU-first, cap 10
 log() { echo "[yt-pak] $*" >> "$LOG"; }
 
 killall -9 ytproxy tplayerdemo minui-presenter 2>/dev/null
@@ -118,15 +119,28 @@ play_video() {
 
 LASTQ=""
 while true; do
-  # 1) search query via on-screen keyboard (prefilled with the last query)
-  if [ -n "$LASTQ" ]; then
-    Q="$("$KB" --title "Search YouTube" --initial-value "$LASTQ" --show-hardware-group)"; rc=$?
+  # 0) recents screen: pick a past query or start a new search
+  { echo "> New search..."; [ -f "$HIST" ] && head -10 "$HIST"; } > /tmp/yt_recents.txt
+  STATE="$("$LIST" --format text --file /tmp/yt_recents.txt --title "YouTube" --write-value state)"; rc=$?
+  log "recents rc=$rc state=$STATE"
+  [ $rc -ne 0 ] && break            # cancel from recents -> exit pak
+  RIDX="$(printf %s "$STATE" | sed -n 's/.*"selected"[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+  [ -z "$RIDX" ] && break
+  if [ "$RIDX" -eq 0 ]; then
+    # 1) new search via on-screen keyboard (prefilled with the last query)
+    if [ -n "$LASTQ" ]; then
+      Q="$("$KB" --title "Search YouTube" --initial-value "$LASTQ" --show-hardware-group)"; rc=$?
+    else
+      Q="$("$KB" --title "Search YouTube" --show-hardware-group)"; rc=$?
+    fi
+    log "keyboard rc=$rc q='$Q'"
+    [ $rc -ne 0 ] && continue       # keyboard cancel -> back to recents
+    [ -z "$Q" ] && continue
   else
-    Q="$("$KB" --title "Search YouTube" --show-hardware-group)"; rc=$?
+    Q="$(sed -n "${RIDX}p" "$HIST")"  # list row N = history line N (row 0 is New search)
+    [ -z "$Q" ] && continue
+    log "recent pick '$Q'"
   fi
-  log "keyboard rc=$rc q='$Q'"
-  [ $rc -ne 0 ] && break            # Y/Menu cancel -> exit pak
-  [ -z "$Q" ] && continue
   LASTQ="$Q"
 
   # 2) search -> id|duration|title lines (flat = fast, no per-video extract)
@@ -137,6 +151,9 @@ while true; do
     notice "No results — check WiFi?" 3
     continue
   fi
+  # remember the query (MRU, deduped, cap 10)
+  { echo "$Q"; grep -Fxv -- "$Q" "$HIST" 2>/dev/null; } | head -10 > /tmp/yt_hist.new \
+    && cp /tmp/yt_hist.new "$HIST"
   cut -d'|' -f1 /tmp/yt_results.txt > /tmp/yt_ids.txt
   awk -F'|' '{t=$3; for(i=4;i<=NF;i++) t=t"|"$i; if($2!="") t=t"  ["$2"]"; print t}' \
     /tmp/yt_results.txt > /tmp/yt_titles.txt
