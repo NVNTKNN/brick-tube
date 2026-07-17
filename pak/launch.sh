@@ -218,7 +218,14 @@ while true; do
     busy "Loading video..."
     set_gov performance
     T0=$(date +%s)
-    "$YT" -f "22/18/best[vcodec^=avc1][protocol^=https]" -g "https://www.youtube.com/watch?v=$ID" > /tmp/yt_target.txt 2>>"$LOG"
+    # android client first: dodges the web client's bot-check/429 on flagged IPs
+    # (verified 2026-07-17 from home IP: web=bot-check, android=clean URL) and
+    # needs no JS runtime. Default client is the retry if android comes up empty.
+    "$YT" -f "22/18/best[vcodec^=avc1][protocol^=https]" -g --extractor-args "youtube:player_client=android" "https://www.youtube.com/watch?v=$ID" > /tmp/yt_target.txt 2>>"$LOG"
+    if [ ! -s /tmp/yt_target.txt ]; then
+      log "android client resolve empty -> default client retry"
+      "$YT" -f "22/18/best[vcodec^=avc1][protocol^=https]" -g "https://www.youtube.com/watch?v=$ID" > /tmp/yt_target.txt 2>>"$LOG"
+    fi
     log "timing resolve $(( $(date +%s) - T0 ))s"
     set_gov "$GOV_SAVE"
     if [ ! -s /tmp/yt_target.txt ]; then
