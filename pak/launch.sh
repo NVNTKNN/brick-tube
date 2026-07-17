@@ -20,11 +20,13 @@ killall -9 ytproxy tplayerdemo minui-presenter 2>/dev/null
 "$PROXY" 127.0.0.1:8888 >> "$LOG" 2>&1 &
 PROXY_PID=$!
 log "proxy pid $PROXY_PID"
+log "battery at start: $(batt)%"
 
 TPID=""
 AWAKE_PID=""
 cleanup() {
-  set_gov "$GOV_SAVE"; wifi_ps on
+  set_gov "$GOV_SAVE"; wifi_ps on; set_maxf "$MAXF_SAVE"
+  log "battery at exit: $(batt)%" 
   rm -f /tmp/yt_play_alive
   [ -n "$AWAKE_PID" ] && kill "$AWAKE_PID" 2>/dev/null
   killall minui-presenter 2>/dev/null
@@ -47,6 +49,14 @@ set_gov() {
   done
 }
 wifi_ps() { /usr/sbin/iw dev wlan0 set power_save "$1" 2>/dev/null; }
+MAXF_SAVE="$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null)"
+set_maxf() {  # cap CPU clock (playback needs ~none of it — the VPU decodes)
+  [ -n "$MAXF_SAVE" ] || return 0
+  for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do
+    echo "$1" > "$g" 2>/dev/null
+  done
+}
+batt() { cat /sys/class/power_supply/axp2202-battery/capacity 2>/dev/null; }
 
 # --- status screens (minui-presenter) ---
 busy()    { killall minui-presenter 2>/dev/null; "$MSG" --message "$1" --timeout -1 >>"$LOG" 2>&1 & }
@@ -94,7 +104,7 @@ play_video() {
   # rectfix shim: rewrites the demo's TPlayerSetDisplayRect(video WxH) into an
   # aspect-fitted centered rect — the stdin "set dst_rect" parser mangles values
   T0=$(date +%s)
-  LD_PRELOAD=/mnt/SDCARD/Videos/libyt_rectfix.so tplayerdemo "$1" < "$FIFO" >> "$LOG" 2>&1 &
+  LD_PRELOAD="/mnt/SDCARD/Videos/libyt_rectfix.so /mnt/SDCARD/Videos/libyt_audiofix.so" tplayerdemo "$1" < "$FIFO" >> "$LOG" 2>&1 &
   TPID=$!
   exec 3> "$FIFO"                              # hold the writer so stdin never EOFs
   log "playing pid $TPID"
@@ -109,7 +119,9 @@ play_video() {
   # playback profile: decode is on the VPU — drop CPU clocks, kill WiFi power-save
   # (PS-mode batching = the classic stream-stutter cause)
   set_gov conservative
+  set_maxf 1008000
   wifi_ps off
+  log "battery at play start: $(batt)%" 
   # keep-awake scoped to playback only (battery)
   touch /tmp/yt_play_alive
   ( while [ -f /tmp/yt_play_alive ]; do echo 1 > /tmp/stay_awake; sleep 2; done ) &
@@ -118,7 +130,9 @@ play_video() {
   log "ytctl rc=$?"
   rm -f /tmp/yt_play_alive; kill "$AWAKE_PID" 2>/dev/null; AWAKE_PID=""
   set_gov "$GOV_SAVE"
+  set_maxf "$MAXF_SAVE"
   wifi_ps on
+  log "battery at play end: $(batt)%" 
   stop_player
   exec 3>&-; rm -f "$FIFO"
   return 0
