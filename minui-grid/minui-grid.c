@@ -1088,6 +1088,23 @@ void handle_input(struct AppState *state)
 
     PAD_poll();
 
+    // repaint every 500ms while visible cells wait on background thumbnails
+    static Uint32 next_thumb_check = 0;
+    Uint32 now_ticks = SDL_GetTicks();
+    if (now_ticks >= next_thumb_check)
+    {
+        next_thumb_check = now_ticks + 500;
+        for (int ti = state->list_state->first_visible; ti < state->list_state->last_visible; ti++)
+        {
+            struct ListItem *tit = &state->list_state->items[ti];
+            if (!tit->thumb_tried && tit->thumb != NULL && access(tit->thumb, F_OK) != -1)
+            {
+                state->redraw = 1;
+                break;
+            }
+        }
+    }
+
     int max_row_count = state->max_row_count;
 
     bool is_action_button_pressed = false;
@@ -1704,12 +1721,13 @@ void draw_screen(SDL_Surface *screen, struct AppState *state, int ow, bool shoul
             SDL_FillRect(screen, &hi, SDL_MapRGB(screen->format, 255, 255, 255));
         }
 
-        // lazy-load + pre-scale the thumbnail once
+        // lazy-load + pre-scale the thumbnail once; thumbnails download in the
+        // background, so a missing file is retried on later redraws
         if (!it->thumb_tried)
         {
-            it->thumb_tried = true;
             if (it->thumb != NULL && access(it->thumb, F_OK) != -1)
             {
+                it->thumb_tried = true;
                 SDL_Surface *raw = IMG_Load(it->thumb);
                 if (raw != NULL)
                 {
@@ -1731,6 +1749,11 @@ void draw_screen(SDL_Surface *screen, struct AppState *state, int ow, bool shoul
                     }
                 }
             }
+        }
+
+        if (it->thumb == NULL)
+        {
+            it->thumb_tried = true;
         }
 
         SDL_Rect cell = {x, y, cell_w, thumb_h};

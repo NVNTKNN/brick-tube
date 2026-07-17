@@ -30,6 +30,31 @@ var client = &http.Client{
 	},
 }
 
+// warm: open the TLS connection to the target host now (handshakes cost ~1-2s
+// on the A53s) so the player's first real request reuses a pooled connection.
+func warm(w http.ResponseWriter, r *http.Request) {
+	b, err := os.ReadFile(targetFile)
+	if err != nil {
+		http.Error(w, "no target", http.StatusServiceUnavailable)
+		return
+	}
+	req, err := http.NewRequest("GET", strings.TrimSpace(string(b)), nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	req.Header.Set("Range", "bytes=0-0")
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func handler(w http.ResponseWriter, r *http.Request) {
 	b, err := os.ReadFile(targetFile)
 	if err != nil {
@@ -73,6 +98,7 @@ func main() {
 	if len(os.Args) > 1 {
 		addr = os.Args[1]
 	}
+	http.HandleFunc("/warm", warm)
 	http.HandleFunc("/", handler)
 	srv := &http.Server{Addr: addr, ReadHeaderTimeout: 10 * time.Second}
 	log.Printf("ytproxy listening on %s -> %s", addr, targetFile)

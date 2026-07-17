@@ -221,6 +221,9 @@ while true; do
       continue
     fi
 
+    # warm the proxy's googlevideo TLS connection while tplayerdemo spawns
+    wget -q -O /dev/null http://127.0.0.1:8888/warm 2>/dev/null &
+
     # 5) play; MENU = clean stop -> back to this list. A/B pause. Volume free.
     if ! play_video "http://127.0.0.1:8888/stream.mp4"; then
       notice "Playback failed — try another video" 3

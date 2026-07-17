@@ -19,9 +19,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -79,6 +81,11 @@ func truncate(s string, n int) string {
 }
 
 func main() {
+	// child mode: download thumbnails detached from the pak flow
+	if len(os.Args) > 2 && os.Args[1] == "-thumbs" {
+		downloadThumbs(os.Args[2], os.Args[3:])
+		return
+	}
 	if len(os.Args) < 6 {
 		fmt.Fprintln(os.Stderr, "usage: ytsearch <query> <max> <results_path> <thumbdir> <griddir>")
 		os.Exit(1)
@@ -166,13 +173,32 @@ func main() {
 		os.Exit(2)
 	}
 
-	// thumbnails: bounded concurrency — a TLS handshake costs real CPU on the
-	// A53s, so 12 at once contend and time out; 4 workers reuse connections.
+	// thumbnails: hand off to a detached child so the pak can open the grid
+	// immediately — minui-grid fills cells in as files land in tmpfs.
 	os.MkdirAll(thumbDir, 0755)
-	thumbClient := &http.Client{Timeout: 15 * time.Second, Transport: client.Transport}
-	jobs := make(chan string, len(results))
+	ids := make([]string, 0, len(results))
 	for _, r := range results {
-		jobs <- r.id
+		ids = append(ids, r.id)
+	}
+	if exe, err := os.Executable(); err == nil {
+		child := exec.Command(exe, append([]string{"-thumbs", thumbDir}, ids...)...)
+		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := child.Start(); err != nil {
+			downloadThumbs(thumbDir, ids) // can't detach -> do it inline
+		}
+	} else {
+		downloadThumbs(thumbDir, ids)
+	}
+	fmt.Printf("%d results\n", len(results))
+}
+
+// downloadThumbs fetches mqdefault thumbnails with bounded concurrency — a TLS
+// handshake costs real CPU on the A53s, so 12 at once contend and time out.
+func downloadThumbs(thumbDir string, ids []string) {
+	thumbClient := &http.Client{Timeout: 15 * time.Second, Transport: client.Transport}
+	jobs := make(chan string, len(ids))
+	for _, id := range ids {
+		jobs <- id
 	}
 	close(jobs)
 	var wg sync.WaitGroup
@@ -187,22 +213,22 @@ func main() {
 				}
 				resp, err := thumbClient.Get("https://i.ytimg.com/vi/" + id + "/mqdefault.jpg")
 				if err != nil {
-					fmt.Fprintln(os.Stderr, "thumb", id, err)
 					continue
 				}
 				if resp.StatusCode != 200 {
-					fmt.Fprintln(os.Stderr, "thumb", id, "http", resp.StatusCode)
 					resp.Body.Close()
 					continue
 				}
 				data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 				resp.Body.Close()
 				if err == nil && len(data) > 0 {
-					os.WriteFile(dst, data, 0644)
+					tmp := dst + ".part"
+					if os.WriteFile(tmp, data, 0644) == nil {
+						os.Rename(tmp, dst) // atomic: grid never loads a half-written jpg
+					}
 				}
 			}
 		}()
 	}
 	wg.Wait()
-	fmt.Printf("%d results\n", len(results))
 }
