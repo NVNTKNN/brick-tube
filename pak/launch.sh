@@ -124,6 +124,18 @@ play_video() {
   return 0
 }
 
+# fast yt-dlp: onedir build unpacked to tmpfs once per boot. The onefile binary
+# pays ~4.5s of LZMA self-extraction on EVERY run (measured, CPU-bound); the
+# unpacked tree boots in ~1-2s. Falls through to the onefile binary if absent.
+YTFAST=/tmp/ytdlp/yt-dlp/yt-dlp
+if [ ! -x "$YTFAST" ] && [ -f "$BIN/ytdlp-onedir.tgz" ]; then
+  busy "Preparing (once per boot)..."
+  mkdir -p /tmp/ytdlp && tar xzf "$BIN/ytdlp-onedir.tgz" -C /tmp/ytdlp 2>>"$LOG" \
+    && log "onedir yt-dlp unpacked to tmpfs"
+  busy_off
+fi
+[ -x "$YTFAST" ] && YT="$YTFAST" && log "using onedir yt-dlp"
+
 LASTQ=""
 while true; do
   # 0) recents screen: pick a past query or start a new search
