@@ -106,7 +106,7 @@ struct disp_layer_config {
 
 __attribute__((constructor)) static void rectfix_init(void)
 {
-    fprintf(stderr, "[rectfix] loaded (ioctl mode)\n");
+    fprintf(stderr, "[rectfix] loaded\n");
 }
 
 static void fit_rect(long long vw, long long vh, struct disp_rect *win)
@@ -125,52 +125,8 @@ static void fit_rect(long long vw, long long vh, struct disp_rect *win)
     win->height = dh;
 }
 
-#include <string.h>
-#include <fcntl.h>
-
-/* diagnostic: log opens of display/video devices */
-int open64(const char *path, int flags, ...)
-{
-    static int (*real)(const char *, int, ...) = 0;
-    if (!real)
-        real = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, "open64");
-    va_list ap;
-    va_start(ap, flags);
-    unsigned int mode = va_arg(ap, unsigned int);
-    va_end(ap);
-    int fd = real(path, flags, mode);
-    if (path && (strstr(path, "disp") || strstr(path, "video") || strstr(path, "fb")))
-        fprintf(stderr, "[rectfix] open64(%s) = %d\n", path, fd);
-    return fd;
-}
-
-int open(const char *path, int flags, ...)
-{
-    static int (*real)(const char *, int, ...) = 0;
-    if (!real)
-        real = (int (*)(const char *, int, ...))dlsym(RTLD_NEXT, "open");
-    va_list ap;
-    va_start(ap, flags);
-    unsigned int mode = va_arg(ap, unsigned int);
-    va_end(ap);
-    int fd = real(path, flags, mode);
-    if (path && (strstr(path, "disp") || strstr(path, "video") || strstr(path, "fb")))
-        fprintf(stderr, "[rectfix] open(%s) = %d\n", path, fd);
-    return fd;
-}
-
 int ioctl(int fd, unsigned long request, ...)
 {
-    /* diagnostic: print each distinct request code once */
-    static unsigned long seen[64];
-    static int nseen = 0;
-    int found = 0;
-    for (int s = 0; s < nseen; s++)
-        if (seen[s] == request) { found = 1; break; }
-    if (!found && nseen < 64) {
-        seen[nseen++] = request;
-        fprintf(stderr, "[rectfix] ioctl fd=%d req=0x%lx\n", fd, request);
-    }
 
     va_list ap;
     va_start(ap, request);
@@ -190,15 +146,6 @@ int ioctl(int fd, unsigned long request, ...)
             struct disp_layer_config *c = &cfgs[i];
             long long vw = c->info.fb.crop.width >> 32;
             long long vh = c->info.fb.crop.height >> 32;
-            if (logged1 < 6) {
-                logged1++;
-                fprintf(stderr,
-                    "[rectfix] v1 cfg ch=%u lyr=%u en=%d crop %lldx%lld size %ux%u win (%d,%d %ux%u)\n",
-                    c->channel, c->layer_id, (int)c->enable, vw, vh,
-                    c->info.fb.size[0].width, c->info.fb.size[0].height,
-                    c->info.screen_win.x, c->info.screen_win.y,
-                    c->info.screen_win.width, c->info.screen_win.height);
-            }
             if (!c->enable || c->channel != 0)
                 continue; /* video/scaler lives on ch0; UI fb is ch1 */
             if (vw <= 0 || vh <= 0) {
@@ -207,7 +154,15 @@ int ioctl(int fd, unsigned long request, ...)
             }
             if (vw <= 0 || vh <= 0)
                 continue;
+            struct disp_rect old1 = c->info.screen_win;
             fit_rect(vw, vh, &c->info.screen_win);
+            if (logged1 < 3) {
+                logged1++;
+                fprintf(stderr, "[rectfix] v1 ch0 %lldx%lld win (%d,%d %ux%u) -> (%d,%d %ux%u)\n",
+                    vw, vh, old1.x, old1.y, old1.width, old1.height,
+                    c->info.screen_win.x, c->info.screen_win.y,
+                    c->info.screen_win.width, c->info.screen_win.height);
+            }
         }
     }
 
