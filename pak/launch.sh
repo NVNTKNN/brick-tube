@@ -8,7 +8,7 @@ BIN=/mnt/SDCARD/Videos          # shared binaries live here (avoid 40MB SD-card 
 export LD_LIBRARY_PATH=/mnt/SDCARD/.system/tg5040/lib:/usr/lib:/usr/trimui/lib:$LD_LIBRARY_PATH
 export PATH=/usr/trimui/bin:$PATH
 YT="$BIN/yt-dlp"; PROXY="$BIN/ytproxy"; KB="$BIN/minui-keyboard"; LIST="$BIN/minui-list"
-CTL="$BIN/ytctl"; MSG="$BIN/minui-presenter"
+CTL="$BIN/ytctl"; MSG="$BIN/minui-presenter"; SEARCH="$BIN/ytsearch"; GRIDBIN="$BIN/minui-grid"
 LOG=/tmp/youtube-pak.log; : > "$LOG"
 FIFO=/tmp/yt_ctl
 SCREEN_W=1024; SCREEN_H=768                    # Brick panel (4:3) — why 16:9 video stretched
@@ -163,12 +163,21 @@ while true; do
   fi
   LASTQ="$Q"
 
-  # 2) search -> id|duration|title lines (flat = fast, no per-video extract)
+  # 2) search -> id|duration|title lines. Fast path: ytsearch (Go innertube,
+  # ~1s + thumbnails for the grid). Fallback: yt-dlp flat search (proven v1).
   busy "Searching: $Q"
   set_gov performance
   T0=$(date +%s)
-  "$YT" "ytsearch12:$Q" --flat-playlist --no-warnings --print "%(id)s|%(duration_string|)s|%(title).80s" > /tmp/yt_results.txt 2>>"$LOG"
-  log "timing search $(( $(date +%s) - T0 ))s"
+  : > /tmp/yt_results.txt
+  GRID_OK=0
+  if [ -x "$SEARCH" ] && "$SEARCH" "$Q" 12 /tmp/yt_results.txt /tmp/yt_thumbs /tmp >>"$LOG" 2>&1 && [ -s /tmp/yt_results.txt ]; then
+    GRID_OK=1
+    log "timing search-fast $(( $(date +%s) - T0 ))s"
+  else
+    log "ytsearch unavailable/failed -> yt-dlp search"
+    "$YT" "ytsearch12:$Q" --flat-playlist --no-warnings --print "%(id)s|%(duration_string|)s|%(title).80s" > /tmp/yt_results.txt 2>>"$LOG"
+    log "timing search-fallback $(( $(date +%s) - T0 ))s"
+  fi
   set_gov "$GOV_SAVE"
   if [ ! -s /tmp/yt_results.txt ]; then
     log "no results"
@@ -183,9 +192,20 @@ while true; do
     /tmp/yt_results.txt > /tmp/yt_titles.txt
   busy_off
 
-  # 3) results list; after a video stops we come back here, not the keyboard
+  # 3) browse; after a video stops we come back here, not the keyboard.
+  # Thumbnail grid when ytsearch produced grid.json + the binary exists;
+  # abnormal grid exit (crash/error) falls back to the text list for good.
   while true; do
-    STATE="$("$LIST" --format text --file /tmp/yt_titles.txt --title "$Q" --write-value state)"; rc=$?
+    if [ "$GRID_OK" = 1 ] && [ -x "$GRIDBIN" ] && [ -s /tmp/grid.json ]; then
+      STATE="$("$GRIDBIN" --file /tmp/grid.json --item-key items --title "$Q" --write-value state)"; rc=$?
+      case $rc in
+        0|2|3) ;;                    # pick / B-back / MENU-back = normal
+        *) log "minui-grid rc=$rc -> text list fallback"; GRID_OK=0
+           STATE="$("$LIST" --format text --file /tmp/yt_titles.txt --title "$Q" --write-value state)"; rc=$? ;;
+      esac
+    else
+      STATE="$("$LIST" --format text --file /tmp/yt_titles.txt --title "$Q" --write-value state)"; rc=$?
+    fi
     log "list rc=$rc state=$STATE"
     [ $rc -ne 0 ] && break           # B/back -> new search
     IDX="$(printf %s "$STATE" | sed -n 's/.*"selected"[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -1)"
