@@ -1,0 +1,9 @@
+{
+  "name": "YouTube",
+  "type": "TOOL",
+  "description": "Search and stream YouTube (hardware-decoded)",
+  "author": "navneeth",
+  "platforms": ["tg5040"],
+  "launch": "launch.sh",
+  "version": "0.1.0"
+}
