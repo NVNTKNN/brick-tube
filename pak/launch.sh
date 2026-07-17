@@ -126,7 +126,7 @@ play_video() {
   touch /tmp/yt_play_alive
   ( while [ -f /tmp/yt_play_alive ]; do echo 1 > /tmp/stay_awake; sleep 2; done ) &
   AWAKE_PID=$!
-  "$CTL" "$FIFO" "$TPID" "$LOG" /dev/input/event3
+  "$CTL" "$FIFO" "$TPID" "$LOG" /dev/input/event3 "$DUR_S"
   log "ytctl rc=$?"
   rm -f /tmp/yt_play_alive; kill "$AWAKE_PID" 2>/dev/null; AWAKE_PID=""
   set_gov "$GOV_SAVE"
@@ -228,7 +228,10 @@ while true; do
     [ -z "$IDX" ] && break
     ID="$(sed -n "$((IDX+1))p" /tmp/yt_ids.txt)"
     [ -z "$ID" ] && break
-    log "picked idx=$IDX id=$ID"
+    # duration seconds from the results row (field 2, "M:SS" or "H:MM:SS"); 0 if unknown
+    DUR_STR="$(sed -n "$((IDX+1))p" /tmp/yt_results.txt | cut -d'|' -f2)"
+    DUR_S="$(echo "$DUR_STR" | awk -F: '{n=NF; s=0; for(i=1;i<=n;i++) s=s*60+$i; print s+0}')"
+    log "picked idx=$IDX id=$ID dur=${DUR_S}s"
 
     # 4) resolve stream (prefer 720p muxed when it exists, else 360p) -> proxy target
     busy "Loading video..."
