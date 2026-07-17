@@ -1,0 +1,4 @@
+minui/
+include/
+*.o
+minui-grid-*
