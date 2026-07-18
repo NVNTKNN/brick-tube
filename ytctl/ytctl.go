@@ -345,6 +345,13 @@ func main() {
 	pos := 0.0
 	playing := true
 
+	logfile, _ := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	logf := func(format string, a ...any) {
+		if logfile != nil {
+			fmt.Fprintf(logfile, "[ytctl] "+format+"\n", a...)
+		}
+	}
+
 	seekTo := func(p float64) {
 		if p < 0 {
 			p = 0
@@ -354,6 +361,7 @@ func main() {
 		}
 		pos = p
 		// the player's command token is "seekto" (no space) — "seek to" no-matches
+		logf("seek pos=%.1f dur=%.1f -> seekto:%d", p, duration, int(p))
 		send(fmt.Sprintf("seekto:%d", int(p)))
 		if !playing {
 			send("pause") // seek may resume; keep it held (pause is idempotent)
