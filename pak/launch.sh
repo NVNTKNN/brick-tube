@@ -69,7 +69,9 @@ busy_off() { killall minui-presenter 2>/dev/null; }
 show_image() {
   printf '{"items":[{"text":"","background_image":"%s","background_color":"#ffffff","show_pill":false}]}' "$1" > /tmp/yt_img.json
   if [ "${2:-0}" = "0" ]; then
-    "$MSG" --file /tmp/yt_img.json --timeout 0 --confirm-button B --confirm-text "BACK" --confirm-show >>"$LOG" 2>&1
+    # B is the default CANCEL button — just show it as BACK (assigning confirm=B too
+    # errors "B cannot be assigned to more than one button")
+    "$MSG" --file /tmp/yt_img.json --timeout 0 --cancel-text "BACK" --cancel-show >>"$LOG" 2>&1
   else
     "$MSG" --file /tmp/yt_img.json --timeout "$2" >>"$LOG" 2>&1
   fi
@@ -92,7 +94,7 @@ show_help() {
 }
 
 show_about() {
-  "$MSG" --timeout 0 --confirm-button B --confirm-text "BACK" --confirm-show \
+  "$MSG" --timeout 0 --cancel-text "BACK" --cancel-show \
     --message "BRICK TUBE   v0.1.0
 
 Watch video on your TrimUI Brick --
