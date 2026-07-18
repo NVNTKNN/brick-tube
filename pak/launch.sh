@@ -160,7 +160,7 @@ LASTQ=""
 while true; do
   # 0) recents screen: pick a past query or start a new search
   { echo "> New search..."; [ -f "$HIST" ] && head -10 "$HIST"; } > /tmp/yt_recents.txt
-  STATE="$("$LIST" --format text --file /tmp/yt_recents.txt --title "YouTube" --write-value state)"; rc=$?
+  STATE="$("$LIST" --format text --file /tmp/yt_recents.txt --title "Brick Tube" --write-value state)"; rc=$?
   log "recents rc=$rc state=$STATE"
   [ $rc -ne 0 ] && break            # cancel from recents -> exit pak
   RIDX="$(printf %s "$STATE" | sed -n 's/.*"selected"[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -1)"
@@ -168,9 +168,9 @@ while true; do
   if [ "$RIDX" -eq 0 ]; then
     # 1) new search via on-screen keyboard (prefilled with the last query)
     if [ -n "$LASTQ" ]; then
-      Q="$("$KB" --title "Search YouTube" --initial-value "$LASTQ" --show-hardware-group)"; rc=$?
+      Q="$("$KB" --title "Search" --initial-value "$LASTQ" --show-hardware-group)"; rc=$?
     else
-      Q="$("$KB" --title "Search YouTube" --show-hardware-group)"; rc=$?
+      Q="$("$KB" --title "Search" --show-hardware-group)"; rc=$?
     fi
     log "keyboard rc=$rc q='$Q'"
     [ $rc -ne 0 ] && continue       # keyboard cancel -> back to recents
