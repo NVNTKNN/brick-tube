@@ -24,17 +24,31 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 
-// ---- framebuffer progress bar --------------------------------------------
+// ---- framebuffer progress-bar + timestamp overlay ------------------------
+//
+// The Brick's fb0 is heavily multi-buffered (virtual 1024x16384) and PANNED —
+// the visible buffer sits at a live y-offset (seen as crop y=768 in the disp
+// dump). Drawing to buffer 0 lands off-screen. So we mmap the whole virtual
+// region and rebase every draw to the CURRENT pan offset read via
+// FBIOGET_VSCREENINFO before each paint.
+
+const (
+	fbioGetVScreeninfo = 0x4600
+	panelW             = 1024
+	panelH             = 768
+)
 
 type fb struct {
 	data   []byte
-	w, h   int
+	fd     int
 	stride int
 	bpp    int
+	base   int // byte offset of the visible buffer's top-left
 }
 
 func readIntFile(path string) int {
@@ -47,7 +61,6 @@ func readIntFile(path string) int {
 }
 
 func openFB() *fb {
-	// geometry from sysfs avoids marshaling the fb_var/fix_screeninfo ioctls
 	sz, err := os.ReadFile("/sys/class/graphics/fb0/virtual_size")
 	if err != nil {
 		return nil
@@ -56,50 +69,62 @@ func openFB() *fb {
 	if len(parts) != 2 {
 		return nil
 	}
-	w, _ := strconv.Atoi(parts[0])
-	h, _ := strconv.Atoi(parts[1])
+	vh, _ := strconv.Atoi(parts[1]) // virtual height (mmap the whole region)
 	bpp := readIntFile("/sys/class/graphics/fb0/bits_per_pixel")
 	stride := readIntFile("/sys/class/graphics/fb0/stride")
-	if w <= 0 || h <= 0 || bpp <= 0 {
+	if vh <= 0 || bpp <= 0 {
 		return nil
 	}
 	if stride <= 0 {
-		stride = w * bpp / 8
+		stride = panelW * bpp / 8
 	}
 	f, err := os.OpenFile("/dev/fb0", os.O_RDWR, 0)
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
-	data, err := syscall.Mmap(int(f.Fd()), 0, stride*h,
+	data, err := syscall.Mmap(int(f.Fd()), 0, stride*vh,
 		syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
 	if err != nil {
+		f.Close()
 		return nil
 	}
-	return &fb{data: data, w: w, h: h, stride: stride, bpp: bpp}
+	return &fb{data: data, fd: int(f.Fd()), stride: stride, bpp: bpp}
 }
 
-// fillRect writes a solid grey level (r=g=b=v) so we never depend on the
-// panel's channel order — track/fill/black all read correctly in any RGB order.
+// refresh reads the live pan y-offset so draws hit the on-screen buffer.
+func (f *fb) refresh() {
+	var vinfo [160]byte // fb_var_screeninfo
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(f.fd),
+		uintptr(fbioGetVScreeninfo), uintptr(unsafe.Pointer(&vinfo[0])))
+	if errno != 0 {
+		return
+	}
+	yoffset := int(binary.LittleEndian.Uint32(vinfo[20:24])) // yoffset field
+	f.base = yoffset * f.stride
+}
+
+// fillRect writes a solid grey level (r=g=b=v) — channel-order-independent.
 func (f *fb) fillRect(x, y, w, h, v int) {
 	px := f.bpp / 8
-	for yy := y; yy < y+h && yy < f.h; yy++ {
+	for yy := y; yy < y+h && yy < panelH; yy++ {
 		if yy < 0 {
 			continue
 		}
-		row := yy * f.stride
-		for xx := x; xx < x+w && xx < f.w; xx++ {
+		row := f.base + yy*f.stride
+		for xx := x; xx < x+w && xx < panelW; xx++ {
 			if xx < 0 {
 				continue
 			}
 			o := row + xx*px
+			if o < 0 || o+px > len(f.data) {
+				continue
+			}
 			if px == 4 {
 				f.data[o] = byte(v)
 				f.data[o+1] = byte(v)
 				f.data[o+2] = byte(v)
 				f.data[o+3] = 0xff
 			} else if px == 2 {
-				// RGB565 grey
 				c := uint16((v>>3)<<11 | (v>>2)<<5 | (v >> 3))
 				f.data[o] = byte(c)
 				f.data[o+1] = byte(c >> 8)
@@ -108,25 +133,77 @@ func (f *fb) fillRect(x, y, w, h, v int) {
 	}
 }
 
-// bar geometry: bottom letterbox strip (16:9 video leaves ~96px black there)
-func (f *fb) barBox() (x, y, w, h int) {
-	margin := f.w / 16
-	h = 14
-	y = f.h - 52
-	x = margin
-	w = f.w - 2*margin
-	return
+// 5x7 bitmap font, low 5 bits per row, for the timestamp glyphs.
+var font5x7 = map[rune][7]uint8{
+	'0': {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E},
+	'1': {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
+	'2': {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F},
+	'3': {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},
+	'4': {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02},
+	'5': {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
+	'6': {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E},
+	'7': {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
+	'8': {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E},
+	'9': {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
+	':': {0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00},
+	'/': {0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10},
+	' ': {0, 0, 0, 0, 0, 0, 0},
+}
+
+func (f *fb) drawText(x, y, scale, v int, s string) {
+	cx := x
+	for _, r := range s {
+		g, ok := font5x7[r]
+		if !ok {
+			g = font5x7[' ']
+		}
+		for ry := 0; ry < 7; ry++ {
+			bits := g[ry]
+			for rx := 0; rx < 5; rx++ {
+				if bits&(1<<(4-uint(rx))) != 0 {
+					f.fillRect(cx+rx*scale, y+ry*scale, scale, scale, v)
+				}
+			}
+		}
+		cx += 6 * scale // 5px glyph + 1px gap
+	}
+}
+
+func fmtClock(sec float64) string {
+	if sec < 0 {
+		sec = 0
+	}
+	t := int(sec)
+	h, m, s := t/3600, (t%3600)/60, t%60
+	if h > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%d:%02d", m, s)
+}
+
+// bottom-strip geometry (16:9 video leaves a ~96px black bar there)
+func barBox() (x, y, w, h int) {
+	margin := panelW / 16
+	return margin, panelH - 44, panelW - 2*margin, 12
 }
 
 func (f *fb) clearBar() {
-	x, y, w, _ := f.barBox()
-	f.fillRect(x-6, y-10, w+12, 40, 0x00) // black out the whole strip band
+	f.refresh()
+	f.fillRect(0, panelH-96, panelW, 96, 0x00) // black out the whole bottom band
 }
 
 func (f *fb) drawBar(pos, dur float64) {
-	x, y, w, h := f.barBox()
-	f.fillRect(x-6, y-10, w+12, 40, 0x00) // clear band first
-	f.fillRect(x, y, w, h, 0x38)          // track (dark grey)
+	f.refresh()
+	x, y, w, h := barBox()
+	f.fillRect(0, panelH-96, panelW, 96, 0x00) // clear band first
+	// timestamp above the bar: "M:SS / M:SS"
+	label := fmtClock(pos)
+	if dur > 0 {
+		label += " / " + fmtClock(dur)
+	}
+	f.drawText(x, y-40, 4, 0xff, label)
+	// track + fill
+	f.fillRect(x, y, w, h, 0x38)
 	if dur > 0 {
 		frac := pos / dur
 		if frac < 0 {
@@ -136,8 +213,8 @@ func (f *fb) drawBar(pos, dur float64) {
 			frac = 1
 		}
 		fw := int(float64(w) * frac)
-		f.fillRect(x, y, fw, h, 0xf0)             // filled (near-white)
-		f.fillRect(x+fw-2, y-5, 4, h+10, 0xff)    // playhead knob
+		f.fillRect(x, y, fw, h, 0xf0)
+		f.fillRect(x+fw-2, y-5, 4, h+10, 0xff)
 	}
 }
 
