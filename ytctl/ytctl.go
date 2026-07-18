@@ -264,9 +264,8 @@ func main() {
 		}
 	}
 
-	// input reader: EV_KEY presses + D-pad (EV_ABS hat-X, or key form) as
-	// synthetic codes 1000 (LEFT) / 1001 (RIGHT).
-	const codeLeft, codeRight = 1000, 1001
+	// input reader: EV_KEY presses only (forward scrub was removed — the vendor
+	// player can't seek beyond its ~5s live-stream buffer, so scrub was a lie).
 	keys := make(chan uint16, 16)
 	go func() {
 		buf := make([]byte, 24)
@@ -282,29 +281,10 @@ func main() {
 			etype := binary.LittleEndian.Uint16(buf[16:18])
 			code := binary.LittleEndian.Uint16(buf[18:20])
 			value := int32(binary.LittleEndian.Uint32(buf[20:24]))
-			switch etype {
-			case 1: // EV_KEY
-				if value != 1 {
-					continue
-				}
-				switch code {
-				case 105: // KEY_LEFT
-					keys <- codeLeft
-				case 106: // KEY_RIGHT
-					keys <- codeRight
+			if etype == 1 && value == 1 { // key press only
+				select {
+				case keys <- code:
 				default:
-					select {
-					case keys <- code:
-					default:
-					}
-				}
-			case 3: // EV_ABS — d-pad hat on this X360-clone (ABS_HAT0X = 16)
-				if code == 16 {
-					if value < 0 {
-						keys <- codeLeft
-					} else if value > 0 {
-						keys <- codeRight
-					}
 				}
 			}
 		}
@@ -339,37 +319,12 @@ func main() {
 		return false
 	}
 
-	// position tracking: pos advances with wall-clock while playing; seeks jump it
+	// position tracking: pos advances with wall-clock while playing (for the
+	// pause timestamp/bar).
 	start := time.Now()
 	last := time.Now()
 	pos := 0.0
 	playing := true
-
-	logfile, _ := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
-	logf := func(format string, a ...any) {
-		if logfile != nil {
-			fmt.Fprintf(logfile, "[ytctl] "+format+"\n", a...)
-		}
-	}
-
-	seekTo := func(p float64) {
-		if p < 0 {
-			p = 0
-		}
-		if duration > 0 && p > duration-1 {
-			p = duration - 1
-		}
-		pos = p
-		// the player's command token is "seekto" (no space) — "seek to" no-matches
-		logf("seek pos=%.1f dur=%.1f -> seekto:%d", p, duration, int(p))
-		send(fmt.Sprintf("seekto:%d", int(p)))
-		if !playing {
-			send("pause") // seek may resume; keep it held (pause is idempotent)
-			if screen != nil {
-				screen.drawBar(pos, duration)
-			}
-		}
-	}
 
 	tick := time.NewTicker(250 * time.Millisecond)
 	for {
@@ -401,10 +356,6 @@ func main() {
 						screen.clearBar()
 					}
 				}
-			case codeLeft:
-				seekTo(pos - 10)
-			case codeRight:
-				seekTo(pos + 10)
 			}
 		case <-tick.C:
 			if !alive(pid) {

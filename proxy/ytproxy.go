@@ -71,9 +71,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
-	rng := r.Header.Get("Range")
-	log.Printf("proxy %s Range=%q", r.Method, rng)
-	if rng != "" {
+	if rng := r.Header.Get("Range"); rng != "" {
 		req.Header.Set("Range", rng)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
