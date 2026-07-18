@@ -99,7 +99,15 @@ A few things that were **not** obvious and cost real hair:
 | `audiofix/` | `libyt_audiofix.so` — the speaker warmth EQ |
 | `assets/` | logo, splash, help art |
 
-Build + deploy notes live in [`HANDOFF.md`](HANDOFF.md).
+## Building from source
+
+The Go binaries (`ytproxy`, `ytsearch`, `ytctl`) cross-compile with
+`GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build`. The C pieces (`minui-grid` and the
+two `.so` shims) build against the TrimUI `tg5040` toolchain — clone the
+[union-tg5040 toolchain](https://github.com/shauninman/union-tg5040-toolchain), drop
+the sources into its workspace, and `make PLATFORM=tg5040` inside the container.
+Deploy by copying the built files into `Videos/` and the pak into `Tools/tg5040/` on
+the card (over a card reader, or SSH if you've enabled it).
 
 ## Honest limitations
 
