@@ -17,6 +17,32 @@ computer in the loop, decoded by the actual video hardware.
 You search, you get a wall of thumbnails, you press A, it plays. That's the whole
 pitch. Everything under the hood was a small adventure.
 
+## Install
+
+You need a **TrimUI Brick running NextUI** (platform `tg5040`) and Wi-Fi. That's it —
+no computer stays in the loop after install.
+
+1. Grab the latest **`BrickTube-vX.Y.Z.zip`** from the [Releases](../../releases) page.
+2. Unzip it. You get two folders: **`Tools`** and **`Videos`**.
+3. Copy both into the **root of your SD card**, merging with the folders already
+   there. (Your computer will ask about merging — choose merge / keep both. It only
+   *adds* files, it doesn't replace your games or videos.)
+4. Put the card back in the Brick and reboot.
+5. Make sure Wi-Fi is on (NextUI settings).
+6. Open **Tools → Brick Tube**. Search, pick a thumbnail, press A.
+
+First launch each boot shows a ~2s "Preparing..." while it unpacks `yt-dlp` into RAM.
+That's normal, and only once per boot.
+
+**Uninstall:** delete `Tools/tg5040/Brick Tube.pak`, `Tools/tg5040/.media/Brick Tube.png`,
+and the Brick Tube files from `Videos/` (`yt-dlp`, `ytdlp-onedir.tgz`, `ytproxy`,
+`ytsearch`, `ytctl`, `minui-grid`, `minui-keyboard`, `minui-list`, `minui-presenter`,
+`libyt_*.so`, `audiofix.conf`, `logo-corner.png`).
+
+> **Brick only, for now.** The letterbox fix is specific to the Brick's Allwinner
+> display hardware, so this is `tg5040`-only. It won't work as-is on other NextUI
+> devices.
+
 ## What it does
 
 - **Search + a real thumbnail grid.** Type a query, get a 3-wide grid of results
