@@ -88,7 +88,7 @@ show_help() {
   if [ -f "$DIR/help.png" ]; then
     show_image "$DIR/help.png" 0
   else
-    "$MSG" --timeout 0 --confirm-button B --confirm-text "BACK" --confirm-show \
+    "$MSG" --timeout 0 --cancel-text "BACK" --cancel-show \
       --message "A/B pause, LEFT/RIGHT seek, MENU stop, B back" >>"$LOG" 2>&1
   fi
 }
