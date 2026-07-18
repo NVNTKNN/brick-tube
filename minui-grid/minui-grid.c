@@ -1700,7 +1700,36 @@ void draw_screen(SDL_Surface *screen, struct AppState *state, int ow, bool shoul
     (void)current_item_is_enabled;
 
     int gutter = SCALE1(8);
-    int grid_top = SCALE1(PADDING + initial_list_y_padding) + gutter;
+
+    // --- Brick Tube header band: white bar, logo top-left, count top-right ---
+    static SDL_Surface *g_logo = NULL;
+    static int g_logo_tried = 0;
+    if (!g_logo_tried) {
+        g_logo_tried = 1;
+        SDL_Surface *raw = IMG_Load("/mnt/SDCARD/Videos/logo-corner.png");
+        if (raw) { g_logo = SDL_ConvertSurface(raw, screen->format, 0); SDL_FreeSurface(raw); }
+    }
+    int band_h = SCALE1(30);
+    if (g_logo && g_logo->h + SCALE1(6) > band_h) band_h = g_logo->h + SCALE1(6);
+    SDL_FillRect(screen, &(SDL_Rect){0, 0, screen->w, band_h},
+                 SDL_MapRGB(screen->format, 255, 255, 255));
+    if (g_logo) {
+        SDL_Rect lp = {SCALE1(PADDING), (band_h - g_logo->h) / 2, g_logo->w, g_logo->h};
+        SDL_BlitSurface(g_logo, NULL, screen, &lp);
+    }
+    { // "n / N" at the right of the band, dark text
+        char cnt[32];
+        snprintf(cnt, sizeof(cnt), "%d / %zu",
+                 state->list_state->selected + 1, state->list_state->item_count);
+        SDL_Surface *ct = TTF_RenderUTF8_Blended(state->fonts.medium, cnt, COLOR_DARK_TEXT);
+        if (ct) {
+            SDL_Rect cp = {screen->w - ct->w - SCALE1(PADDING), (band_h - ct->h) / 2, ct->w, ct->h};
+            SDL_BlitSurface(ct, NULL, screen, &cp);
+            SDL_FreeSurface(ct);
+        }
+    }
+
+    int grid_top = band_h + gutter;
     int cell_w = (screen->w - gutter * (GRID_COLS + 1)) / GRID_COLS;
     int thumb_h = cell_w * 9 / 16; // mqdefault is 16:9
     int title_h = TTF_FontHeight(state->fonts.medium);

@@ -1,5 +1,5 @@
 #!/bin/sh
-# YouTube pak: keyboard search -> results list -> resolve -> on-device http/https
+# Brick Tube pak: keyboard search -> results list -> resolve -> on-device http/https
 # proxy -> tplayerdemo (CedarX HW decode), driven via a stdin FIFO so stop is a
 # clean "quit" (video layer torn down — no grey screen). MENU stops, A/B pause,
 # volume never stops playback. Stopping a video returns to the results list.
@@ -62,6 +62,9 @@ batt() { cat /sys/class/power_supply/axp2202-battery/capacity 2>/dev/null; }
 busy()    { killall minui-presenter 2>/dev/null; "$MSG" --message "$1" --timeout -1 >>"$LOG" 2>&1 & }
 notice()  { killall minui-presenter 2>/dev/null; "$MSG" --message "$1" --timeout "${2:-3}" >>"$LOG" 2>&1; }
 busy_off() { killall minui-presenter 2>/dev/null; }
+
+# splash screen on load (Brick Tube logo, ~2s)
+[ -f "$DIR/splash.png" ] && "$MSG" --message "" --background-image "$DIR/splash.png" --timeout 2 >>"$LOG" 2>&1
 
 # Watch the log tail (from line $1) for playback start/failure. 0=playing 1=failed
 play_ok() {
@@ -213,7 +216,7 @@ while true; do
   # abnormal grid exit (crash/error) falls back to the text list for good.
   while true; do
     if [ "$GRID_OK" = 1 ] && [ -x "$GRIDBIN" ] && [ -s /tmp/grid.json ]; then
-      STATE="$("$GRIDBIN" --file /tmp/grid.json --item-key items --title "$Q" --write-value state)"; rc=$?
+      STATE="$("$GRIDBIN" --file /tmp/grid.json --item-key items --title "" --write-value state)"; rc=$?
       case $rc in
         0|2|3) ;;                    # pick / B-back / MENU-back = normal
         *) log "minui-grid rc=$rc -> text list fallback"; GRID_OK=0
