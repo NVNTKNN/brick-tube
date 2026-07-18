@@ -71,29 +71,22 @@ busy_off() { killall minui-presenter 2>/dev/null; }
 menu_idx() { printf %s "$1" | sed -n 's/.*"selected"[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -1; }
 
 show_help() {
-  "$MSG" --timeout 0 --message "HOW TO USE
-
-Recents: pick a past search, or New search.
-Search: type a query, then CONFIRM.
-Grid: D-pad to move, A to play.
-
-While playing:
-  A / B  =  pause / resume
-  LEFT / RIGHT  =  seek 10s
-  Volume  =  volume (never stops)
-  MENU  =  stop, back to results
-
-B  =  back one screen." >>"$LOG" 2>&1
+  if [ -f "$DIR/help.png" ]; then
+    "$MSG" --timeout 0 --message "" --background-image "$DIR/help.png" >>"$LOG" 2>&1
+  else
+    "$MSG" --timeout 0 --message "A/B pause, LEFT/RIGHT seek, MENU stop, B back" >>"$LOG" 2>&1
+  fi
 }
 
 show_about() {
   "$MSG" --timeout 0 --message "BRICK TUBE   v0.1.0
 
-YouTube on your TrimUI Brick --
+Watch video on your TrimUI Brick --
 hardware-decoded and untethered.
 
-Search + stream via yt-dlp and the
-Allwinner CedarX video decoder.
+For personal use. Not affiliated with
+YouTube or Google. Plays public streams
+on your device; hosts no content.
 
 Made by navneeth
 github.com/NVNTKNN/brick-tube" >>"$LOG" 2>&1
