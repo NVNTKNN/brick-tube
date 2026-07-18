@@ -72,14 +72,17 @@ menu_idx() { printf %s "$1" | sed -n 's/.*"selected"[^0-9]*\([0-9][0-9]*\).*/\1/
 
 show_help() {
   if [ -f "$DIR/help.png" ]; then
-    "$MSG" --timeout 0 --message "" --background-image "$DIR/help.png" >>"$LOG" 2>&1
+    "$MSG" --timeout 0 --confirm-button B --confirm-text "BACK" --confirm-show \
+      --message "" --background-image "$DIR/help.png" >>"$LOG" 2>&1
   else
-    "$MSG" --timeout 0 --message "A/B pause, LEFT/RIGHT seek, MENU stop, B back" >>"$LOG" 2>&1
+    "$MSG" --timeout 0 --confirm-button B --confirm-text "BACK" --confirm-show \
+      --message "A/B pause, LEFT/RIGHT seek, MENU stop, B back" >>"$LOG" 2>&1
   fi
 }
 
 show_about() {
-  "$MSG" --timeout 0 --message "BRICK TUBE   v0.1.0
+  "$MSG" --timeout 0 --confirm-button B --confirm-text "BACK" --confirm-show \
+    --message "BRICK TUBE   v0.1.0
 
 Watch video on your TrimUI Brick --
 hardware-decoded and untethered.
