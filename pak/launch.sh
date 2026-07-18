@@ -63,8 +63,20 @@ busy()    { killall minui-presenter 2>/dev/null; "$MSG" --message "$1" --timeout
 notice()  { killall minui-presenter 2>/dev/null; "$MSG" --message "$1" --timeout "${2:-3}" >>"$LOG" 2>&1; }
 busy_off() { killall minui-presenter 2>/dev/null; }
 
+# show a full-screen image via minui-presenter. minui-presenter needs a --message
+# or a --file (an empty --message errors "No message or file provided"), so we feed
+# the image as a single background_image item. $2 = timeout (0 = wait for B).
+show_image() {
+  printf '{"items":[{"text":"","background_image":"%s","background_color":"#ffffff","show_pill":false}]}' "$1" > /tmp/yt_img.json
+  if [ "${2:-0}" = "0" ]; then
+    "$MSG" --file /tmp/yt_img.json --timeout 0 --confirm-button B --confirm-text "BACK" --confirm-show >>"$LOG" 2>&1
+  else
+    "$MSG" --file /tmp/yt_img.json --timeout "$2" >>"$LOG" 2>&1
+  fi
+}
+
 # splash screen on load (Brick Tube logo, ~2s)
-[ -f "$DIR/splash.png" ] && "$MSG" --message "" --background-image "$DIR/splash.png" --timeout 2 >>"$LOG" 2>&1
+[ -f "$DIR/splash.png" ] && show_image "$DIR/splash.png" 2
 
 # --- menu (reachable from the recents screen) ---
 # parse a minui-list "{"selected": N}" state blob -> N
@@ -72,8 +84,7 @@ menu_idx() { printf %s "$1" | sed -n 's/.*"selected"[^0-9]*\([0-9][0-9]*\).*/\1/
 
 show_help() {
   if [ -f "$DIR/help.png" ]; then
-    "$MSG" --timeout 0 --confirm-button B --confirm-text "BACK" --confirm-show \
-      --message "" --background-image "$DIR/help.png" >>"$LOG" 2>&1
+    show_image "$DIR/help.png" 0
   else
     "$MSG" --timeout 0 --confirm-button B --confirm-text "BACK" --confirm-show \
       --message "A/B pause, LEFT/RIGHT seek, MENU stop, B back" >>"$LOG" 2>&1
