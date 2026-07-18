@@ -353,7 +353,8 @@ func main() {
 			p = duration - 1
 		}
 		pos = p
-		send(fmt.Sprintf("seek to:%d", int(p)))
+		// the player's command token is "seekto" (no space) — "seek to" no-matches
+		send(fmt.Sprintf("seekto:%d", int(p)))
 		if !playing {
 			send("pause") // seek may resume; keep it held (pause is idempotent)
 			if screen != nil {
