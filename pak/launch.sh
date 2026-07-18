@@ -66,6 +66,60 @@ busy_off() { killall minui-presenter 2>/dev/null; }
 # splash screen on load (Brick Tube logo, ~2s)
 [ -f "$DIR/splash.png" ] && "$MSG" --message "" --background-image "$DIR/splash.png" --timeout 2 >>"$LOG" 2>&1
 
+# --- menu (reachable from the recents screen) ---
+# parse a minui-list "{"selected": N}" state blob -> N
+menu_idx() { printf %s "$1" | sed -n 's/.*"selected"[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -1; }
+
+show_help() {
+  "$MSG" --timeout 0 --message "HOW TO USE
+
+Recents: pick a past search, or New search.
+Search: type a query, then CONFIRM.
+Grid: D-pad to move, A to play.
+
+While playing:
+  A / B  =  pause / resume
+  LEFT / RIGHT  =  seek 10s
+  Volume  =  volume (never stops)
+  MENU  =  stop, back to results
+
+B  =  back one screen." >>"$LOG" 2>&1
+}
+
+show_about() {
+  "$MSG" --timeout 0 --message "BRICK TUBE   v0.1.0
+
+YouTube on your TrimUI Brick --
+hardware-decoded and untethered.
+
+Search + stream via yt-dlp and the
+Allwinner CedarX video decoder.
+
+Made by navneeth
+github.com/NVNTKNN/brick-tube" >>"$LOG" 2>&1
+}
+
+clear_recents() {
+  printf '%s\n' "No, keep them" "Yes, clear them" > /tmp/yt_confirm.txt
+  S="$("$LIST" --format text --file /tmp/yt_confirm.txt --title "Clear recent searches?" --write-value state)"; rc=$?
+  [ $rc -ne 0 ] && return
+  [ "$(menu_idx "$S")" = "1" ] && { rm -f "$HIST"; notice "Recent searches cleared" 2; }
+}
+
+settings_menu() {
+  while true; do
+    printf '%s\n' "How to use" "About" "Clear recent searches" > /tmp/yt_menu.txt
+    S="$("$LIST" --format text --file /tmp/yt_menu.txt --title "Menu" --write-value state)"; rc=$?
+    [ $rc -ne 0 ] && return          # B/back -> recents
+    case "$(menu_idx "$S")" in
+      0) show_help ;;
+      1) show_about ;;
+      2) clear_recents ;;
+      *) return ;;
+    esac
+  done
+}
+
 # Watch the log tail (from line $1) for playback start/failure. 0=playing 1=failed
 play_ok() {
   i=0
@@ -158,15 +212,15 @@ fi
 
 LASTQ=""
 while true; do
-  # 0) recents screen: pick a past query or start a new search
-  { echo "> New search..."; [ -f "$HIST" ] && head -10 "$HIST"; } > /tmp/yt_recents.txt
+  # 0) recents screen: New search / Menu / past queries
+  { echo "> New search..."; echo "= Menu ="; [ -f "$HIST" ] && head -10 "$HIST"; } > /tmp/yt_recents.txt
   STATE="$("$LIST" --format text --file /tmp/yt_recents.txt --title "Brick Tube" --write-value state)"; rc=$?
   log "recents rc=$rc state=$STATE"
   [ $rc -ne 0 ] && break            # cancel from recents -> exit pak
-  RIDX="$(printf %s "$STATE" | sed -n 's/.*"selected"[^0-9]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+  RIDX="$(menu_idx "$STATE")"
   [ -z "$RIDX" ] && break
   if [ "$RIDX" -eq 0 ]; then
-    # 1) new search via on-screen keyboard (prefilled with the last query)
+    # new search via on-screen keyboard (prefilled with the last query)
     if [ -n "$LASTQ" ]; then
       Q="$("$KB" --title "Search" --initial-value "$LASTQ" --show-hardware-group)"; rc=$?
     else
@@ -175,8 +229,11 @@ while true; do
     log "keyboard rc=$rc q='$Q'"
     [ $rc -ne 0 ] && continue       # keyboard cancel -> back to recents
     [ -z "$Q" ] && continue
+  elif [ "$RIDX" -eq 1 ]; then
+    settings_menu                   # row 1 = Menu
+    continue
   else
-    Q="$(sed -n "${RIDX}p" "$HIST")"  # list row N = history line N (row 0 is New search)
+    Q="$(sed -n "$((RIDX-1))p" "$HIST")"  # rows 0,1 = New search, Menu; history starts at row 2
     [ -z "$Q" ] && continue
     log "recent pick '$Q'"
   fi
