@@ -262,7 +262,7 @@ func (f *fb) drawBar(pos, dur float64) {
 
 func main() {
 	if len(os.Args) < 4 {
-		fmt.Fprintln(os.Stderr, "usage: ytctl <fifo> <pid> <log> [eventdev] [duration-s]")
+		fmt.Fprintln(os.Stderr, "usage: ytctl <fifo> <pid> <log> [eventdev] [duration-s] [seekfifo]")
 		os.Exit(1)
 	}
 	fifoPath := os.Args[1]
