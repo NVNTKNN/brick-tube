@@ -95,7 +95,7 @@ show_help() {
 
 show_about() {
   "$MSG" --timeout 0 --cancel-text "BACK" --cancel-show \
-    --message "BRICK TUBE   v0.2.0-beta
+    --message "BRICK TUBE   v0.3.0-beta
 
 Watch video on your TrimUI --
 hardware-decoded and untethered.
@@ -170,7 +170,7 @@ play_video() {
   # rectfix shim: rewrites the demo's TPlayerSetDisplayRect(video WxH) into an
   # aspect-fitted centered rect — the stdin "set dst_rect" parser mangles values
   T0=$(date +%s)
-  LD_PRELOAD="/mnt/SDCARD/Videos/libyt_rectfix.so /mnt/SDCARD/Videos/libyt_audiofix.so" tplayerdemo "$1" < "$FIFO" >> "$LOG" 2>&1 &
+  LD_PRELOAD="/mnt/SDCARD/Videos/libyt_rectfix.so /mnt/SDCARD/Videos/libyt_audiofix.so /mnt/SDCARD/Videos/libyt_seekfix.so" tplayerdemo "$1" < "$FIFO" >> "$LOG" 2>&1 &
   TPID=$!
   exec 3> "$FIFO"                              # hold the writer so stdin never EOFs
   log "playing pid $TPID"
@@ -192,7 +192,7 @@ play_video() {
   touch /tmp/yt_play_alive
   ( while [ -f /tmp/yt_play_alive ]; do echo 1 > /tmp/stay_awake; sleep 2; done ) &
   AWAKE_PID=$!
-  "$CTL" "$FIFO" "$TPID" "$LOG" /dev/input/event3 "$DUR_S"
+  "$CTL" "$FIFO" "$TPID" "$LOG" /dev/input/event3 "$DUR_S" /tmp/yt_seek
   log "ytctl rc=$?"
   rm -f /tmp/yt_play_alive; kill "$AWAKE_PID" 2>/dev/null; AWAKE_PID=""
   set_gov "$GOV_SAVE"
