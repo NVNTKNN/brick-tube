@@ -37,11 +37,7 @@ func alive(pid int) bool { return syscall.Kill(pid, 0) == nil }
 // region and rebase every draw to the CURRENT pan offset read via
 // FBIOGET_VSCREENINFO before each paint.
 
-const (
-	fbioGetVScreeninfo = 0x4600
-	panelW             = 1024
-	panelH             = 768
-)
+const fbioGetVScreeninfo = 0x4600
 
 type fb struct {
 	data   []byte
@@ -49,6 +45,7 @@ type fb struct {
 	stride int
 	bpp    int
 	base   int // byte offset of the visible buffer's top-left
+	w, h   int // visible panel size (Brick 1024x768, Smart Pro 1280x720)
 }
 
 func readIntFile(path string) int {
@@ -58,6 +55,18 @@ func readIntFile(path string) int {
 	}
 	n, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 	return n
+}
+
+// parseVScreeninfo pulls xres, yres, yoffset out of a raw fb_var_screeninfo
+// blob (u32 fields: xres@0, yres@4, yoffset@20).
+func parseVScreeninfo(vinfo []byte) (xres, yres, yoffset int) {
+	if len(vinfo) < 24 {
+		return 0, 0, 0
+	}
+	xres = int(binary.LittleEndian.Uint32(vinfo[0:4]))
+	yres = int(binary.LittleEndian.Uint32(vinfo[4:8]))
+	yoffset = int(binary.LittleEndian.Uint32(vinfo[20:24]))
+	return
 }
 
 func openFB() *fb {
@@ -75,12 +84,21 @@ func openFB() *fb {
 	if vh <= 0 || bpp <= 0 {
 		return nil
 	}
-	if stride <= 0 {
-		stride = panelW * bpp / 8
-	}
 	f, err := os.OpenFile("/dev/fb0", os.O_RDWR, 0)
 	if err != nil {
 		return nil
+	}
+	// panel size from the live var_screeninfo; fall back to the Brick's panel
+	w, h := 1024, 768
+	var vinfo [160]byte
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(),
+		uintptr(fbioGetVScreeninfo), uintptr(unsafe.Pointer(&vinfo[0]))); errno == 0 {
+		if xr, yr, _ := parseVScreeninfo(vinfo[:]); xr > 0 && yr > 0 {
+			w, h = xr, yr
+		}
+	}
+	if stride <= 0 {
+		stride = w * bpp / 8
 	}
 	data, err := syscall.Mmap(int(f.Fd()), 0, stride*vh,
 		syscall.PROT_READ|syscall.PROT_WRITE, syscall.MAP_SHARED)
@@ -88,7 +106,7 @@ func openFB() *fb {
 		f.Close()
 		return nil
 	}
-	return &fb{data: data, fd: int(f.Fd()), stride: stride, bpp: bpp}
+	return &fb{data: data, fd: int(f.Fd()), stride: stride, bpp: bpp, w: w, h: h}
 }
 
 // refresh reads the live pan y-offset so draws hit the on-screen buffer.
@@ -99,19 +117,19 @@ func (f *fb) refresh() {
 	if errno != 0 {
 		return
 	}
-	yoffset := int(binary.LittleEndian.Uint32(vinfo[20:24])) // yoffset field
+	_, _, yoffset := parseVScreeninfo(vinfo[:])
 	f.base = yoffset * f.stride
 }
 
 // fillRect writes a solid grey level (r=g=b=v) — channel-order-independent.
 func (f *fb) fillRect(x, y, w, h, v int) {
 	px := f.bpp / 8
-	for yy := y; yy < y+h && yy < panelH; yy++ {
+	for yy := y; yy < y+h && yy < f.h; yy++ {
 		if yy < 0 {
 			continue
 		}
 		row := f.base + yy*f.stride
-		for xx := x; xx < x+w && xx < panelW; xx++ {
+		for xx := x; xx < x+w && xx < f.w; xx++ {
 			if xx < 0 {
 				continue
 			}
@@ -181,21 +199,21 @@ func fmtClock(sec float64) string {
 	return fmt.Sprintf("%d:%02d", m, s)
 }
 
-// bottom-strip geometry (16:9 video leaves a ~96px black bar there)
-func barBox() (x, y, w, h int) {
-	margin := panelW / 16
-	return margin, panelH - 44, panelW - 2*margin, 12
+// bottom-strip geometry (16:9 video leaves a black bar there on 4:3 panels)
+func (f *fb) barBox() (x, y, w, h int) {
+	margin := f.w / 16
+	return margin, f.h - 44, f.w - 2*margin, 12
 }
 
 func (f *fb) clearBar() {
 	f.refresh()
-	f.fillRect(0, panelH-96, panelW, 96, 0x00) // black out the whole bottom band
+	f.fillRect(0, f.h-96, f.w, 96, 0x00) // black out the whole bottom band
 }
 
 func (f *fb) drawBar(pos, dur float64) {
 	f.refresh()
-	x, y, w, h := barBox()
-	f.fillRect(0, panelH-96, panelW, 96, 0x00) // clear band first
+	x, y, w, h := f.barBox()
+	f.fillRect(0, f.h-96, f.w, 96, 0x00) // clear band first
 	// timestamp above the bar: "M:SS / M:SS"
 	label := fmtClock(pos)
 	if dur > 0 {
