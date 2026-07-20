@@ -1,0 +1,6 @@
+{
+  "label": "Brick Tube",
+  "icon": "icon.png",
+  "launch": "launch.sh",
+  "description": "Search and stream YouTube (hardware-decoded)"
+}
