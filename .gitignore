@@ -11,3 +11,4 @@ minui-grid/minui
 minui-grid/include
 **/*.so
 REDDIT_POST.md
+dist/
