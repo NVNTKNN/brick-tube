@@ -40,10 +40,27 @@ static void *seek_thread(void *arg)
         int n;
         while ((n = (int)read(fd, buf, sizeof buf - 1)) > 0) {
             buf[n] = 0;
-            char *end;
-            long sec = strtol(buf, &end, 10);
-            if (end == buf || sec < 0 || sec > 86400)
-                continue;               /* non-numeric / negative / absurd */
+            /* parse every complete line in the buffer; act on the LAST valid
+             * target so a coalesced repeat burst becomes one seek */
+            long sec = -1;
+            char *p = buf;
+            while (*p) {
+                char *end;
+                long v = strtol(p, &end, 10);
+                if (end == p) {         /* no digits here: skip to next line */
+                    while (*end && *end != '\n')
+                        end++;
+                } else if (*end == '\n' && v >= 0 && v <= 86400) {
+                    sec = v;            /* complete, valid line */
+                }
+                /* an incomplete trailing number (no \n yet) is ignored —
+                 * its remainder arrives in the next read */
+                while (*end == '\n')
+                    end++;
+                p = end;
+            }
+            if (sec < 0)
+                continue;
             if (!g_player || !real_seekto) {
                 fprintf(stderr, "[seekfix] not ready (player=%p fn=%p)\n",
                         g_player, (void *)real_seekto);
