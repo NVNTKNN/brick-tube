@@ -3,11 +3,14 @@
 // cleanly (TPlayerDestroy) — no grey screen after stop. Also owns a pause-only
 // progress bar (drawn into the fb0 letterbox strip) and D-pad scrubbing.
 //
-// usage: ytctl <fifo> <tplayer-pid> <logfile> [eventdev] [duration-seconds]
+// usage: ytctl <fifo> <tplayer-pid> <logfile> [eventdev] [duration-seconds] [seekfifo]
 //   MENU (316)          -> "quit" (clean layer teardown) -> exit 0
 //   A/B (304/305)       -> pause/resume toggle (both, probe ambiguity harmless)
-//   D-pad LEFT/RIGHT    -> seek -/+10s (hat-axis or key form); works while
-//                          playing or paused
+//   D-pad LEFT/RIGHT    -> seek -/+5s via the seekfix shim's /tmp/yt_seek FIFO
+//                          (direct TPlayerSeekTo — the demo's stdin seekto
+//                          parser mangles targets); works playing or paused,
+//                          hold to repeat. Bar flashes 2s on seek while
+//                          playing; stays while paused.
 //   volume (114/115)    -> ignored
 // On pause: a progress bar is drawn in the bottom letterbox strip of /dev/fb0;
 // it clears on resume. Position is tracked from wall-clock + seeks (no player
@@ -199,6 +202,25 @@ func fmtClock(sec float64) string {
 	return fmt.Sprintf("%d:%02d", m, s)
 }
 
+// clampSeek returns the absolute target for a ±delta step, clamped to
+// [0, duration-5]; when duration is unknown (0) only the lower bound applies.
+func clampSeek(pos, delta, duration float64) float64 {
+	t := pos + delta
+	if duration > 0 {
+		max := duration - 5
+		if max < 0 {
+			max = 0
+		}
+		if t > max {
+			t = max
+		}
+	}
+	if t < 0 {
+		t = 0
+	}
+	return t
+}
+
 // bottom-strip geometry (16:9 video leaves a black bar there on 4:3 panels)
 func (f *fb) barBox() (x, y, w, h int) {
 	margin := f.w / 16
@@ -257,6 +279,10 @@ func main() {
 	if len(os.Args) > 5 {
 		duration, _ = strconv.ParseFloat(os.Args[5], 64)
 	}
+	seekFIFO := "/tmp/yt_seek"
+	if len(os.Args) > 6 && os.Args[6] != "" {
+		seekFIFO = os.Args[6]
+	}
 
 	ev, err := os.Open(dev)
 	if err != nil {
@@ -272,6 +298,8 @@ func main() {
 		_, werr := fmt.Fprintf(fifo, "%s\n", cmd)
 		return werr == nil
 	}
+	// quitAndWait sends "quit" then blocks; callers os.Exit right after, so no
+	// seek FIFO write can ever race at/after quit (the shim's ordering guarantee).
 	quitAndWait := func() {
 		if screen != nil {
 			screen.clearBar()
@@ -282,8 +310,9 @@ func main() {
 		}
 	}
 
-	// input reader: EV_KEY presses only (forward scrub was removed — the vendor
-	// player can't seek beyond its ~5s live-stream buffer, so scrub was a lie).
+	// input reader: EV_KEY presses (+ key-repeat for D-pad) + EV_ABS hat-X as
+	// synthetic codes 1000 (LEFT) / 1001 (RIGHT).
+	const codeLeft, codeRight = 1000, 1001
 	keys := make(chan uint16, 16)
 	go func() {
 		buf := make([]byte, 24)
@@ -299,10 +328,29 @@ func main() {
 			etype := binary.LittleEndian.Uint16(buf[16:18])
 			code := binary.LittleEndian.Uint16(buf[18:20])
 			value := int32(binary.LittleEndian.Uint32(buf[20:24]))
-			if etype == 1 && value == 1 { // key press only
-				select {
-				case keys <- code:
+			switch etype {
+			case 1: // EV_KEY; repeats (value==2) count for the D-pad only
+				if value != 1 && !(value == 2 && (code == 105 || code == 106)) {
+					continue
+				}
+				switch code {
+				case 105: // KEY_LEFT
+					keys <- codeLeft
+				case 106: // KEY_RIGHT
+					keys <- codeRight
 				default:
+					select {
+					case keys <- code:
+					default:
+					}
+				}
+			case 3: // EV_ABS — d-pad hat on this pad (ABS_HAT0X = 16)
+				if code == 16 {
+					if value < 0 {
+						keys <- codeLeft
+					} else if value > 0 {
+						keys <- codeRight
+					}
 				}
 			}
 		}
@@ -344,6 +392,32 @@ func main() {
 	pos := 0.0
 	playing := true
 
+	var hideAt time.Time // zero = no scheduled hide (bar stays)
+	var seekWarned bool
+	doSeek := func(delta float64) {
+		t := clampSeek(pos, delta, duration)
+		f, oerr := os.OpenFile(seekFIFO, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if oerr != nil {
+			if !seekWarned {
+				seekWarned = true
+				fmt.Fprintf(os.Stderr, "[ytctl] seek unavailable: %v\n", oerr)
+			}
+			return
+		}
+		fmt.Fprintf(f, "%d\n", int(t))
+		f.Close()
+		pos = t
+		last = time.Now()
+		if screen != nil {
+			screen.drawBar(pos, duration)
+		}
+		if playing {
+			hideAt = time.Now().Add(2 * time.Second)
+		} else {
+			hideAt = time.Time{}
+		}
+	}
+
 	tick := time.NewTicker(250 * time.Millisecond)
 	for {
 		select {
@@ -359,6 +433,10 @@ func main() {
 			case 316: // MENU: clean stop
 				quitAndWait()
 				os.Exit(0)
+			case codeLeft:
+				doSeek(-5)
+			case codeRight:
+				doSeek(5)
 			case 304, 305: // A/B: pause/resume toggle
 				if playing {
 					send("pause")
@@ -366,6 +444,7 @@ func main() {
 					if screen != nil {
 						screen.drawBar(pos, duration)
 					}
+					hideAt = time.Time{}
 				} else {
 					send("play")
 					playing = true
@@ -373,6 +452,7 @@ func main() {
 					if screen != nil {
 						screen.clearBar()
 					}
+					hideAt = time.Time{}
 				}
 			}
 		case <-tick.C:
@@ -383,6 +463,12 @@ func main() {
 				now := time.Now()
 				pos += now.Sub(last).Seconds()
 				last = now
+			}
+			if playing && !hideAt.IsZero() && time.Now().After(hideAt) {
+				hideAt = time.Time{}
+				if screen != nil {
+					screen.clearBar()
+				}
 			}
 			if completed() {
 				quitAndWait()

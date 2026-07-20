@@ -22,3 +22,22 @@ func TestParseVScreeninfoShortBuffer(t *testing.T) {
 		t.Fatalf("short buffer must return zeros, got %d,%d,%d", x, y, off)
 	}
 }
+
+func TestClampSeek(t *testing.T) {
+	cases := []struct {
+		pos, delta, dur, want float64
+	}{
+		{10, 5, 600, 15},    // plain forward
+		{10, -5, 600, 5},    // plain backward
+		{2, -5, 600, 0},     // clamp at start
+		{598, 5, 600, 595},  // clamp at duration-5
+		{10, 5, 0, 15},      // unknown duration: no upper clamp
+		{2, -5, 0, 0},       // unknown duration: lower clamp still applies
+		{1, 5, 4, 0},        // shorter than 5s: max is 0
+	}
+	for _, c := range cases {
+		if got := clampSeek(c.pos, c.delta, c.dur); got != c.want {
+			t.Fatalf("clampSeek(%v,%v,%v)=%v want %v", c.pos, c.delta, c.dur, got, c.want)
+		}
+	}
+}
