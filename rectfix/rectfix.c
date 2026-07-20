@@ -19,9 +19,15 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define PANEL_W 1024
 #define PANEL_H 768
+
+/* runtime panel size — Brick 1024x768, Smart Pro 1280x720; the launcher
+ * exports BRICKTUBE_PANEL_W/H, defaults keep exact v0.1.0 Brick behaviour */
+static int panel_w = PANEL_W;
+static int panel_h = PANEL_H;
 
 #define DISP_LAYER_SET_CONFIG  0x47
 #define DISP_LAYER_SET_CONFIG2 0x49
@@ -106,21 +112,30 @@ struct disp_layer_config {
 
 __attribute__((constructor)) static void rectfix_init(void)
 {
-    fprintf(stderr, "[rectfix] loaded\n");
+    const char *w = getenv("BRICKTUBE_PANEL_W");
+    const char *h = getenv("BRICKTUBE_PANEL_H");
+    if (w && h) {
+        int wi = atoi(w), hi = atoi(h);
+        if (wi >= 320 && wi <= 4096 && hi >= 240 && hi <= 4096) {
+            panel_w = wi;
+            panel_h = hi;
+        }
+    }
+    fprintf(stderr, "[rectfix] loaded panel %dx%d\n", panel_w, panel_h);
 }
 
 static void fit_rect(long long vw, long long vh, struct disp_rect *win)
 {
-    unsigned int dw = PANEL_W;
-    unsigned int dh = (unsigned int)((long long)PANEL_W * vh / vw);
-    if (dh > PANEL_H) {
-        dh = PANEL_H;
-        dw = (unsigned int)((long long)PANEL_H * vw / vh);
+    unsigned int dw = panel_w;
+    unsigned int dh = (unsigned int)((long long)panel_w * vh / vw);
+    if (dh > (unsigned int)panel_h) {
+        dh = panel_h;
+        dw = (unsigned int)((long long)panel_h * vw / vh);
     }
     dw &= ~1u;
     dh &= ~1u;
-    win->x = (PANEL_W - (int)dw) / 2;
-    win->y = (PANEL_H - (int)dh) / 2;
+    win->x = (panel_w - (int)dw) / 2;
+    win->y = (panel_h - (int)dh) / 2;
     win->width = dw;
     win->height = dh;
 }
