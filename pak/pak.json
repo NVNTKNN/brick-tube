@@ -1,9 +1,9 @@
 {
   "name": "Brick Tube",
   "type": "TOOL",
-  "description": "Search and stream YouTube on the Brick (hardware-decoded)",
+  "description": "Search and stream YouTube (hardware-decoded)",
   "author": "navneeth",
   "platforms": ["tg5040"],
   "launch": "launch.sh",
-  "version": "0.1.0"
+  "version": "0.2.0-beta"
 }
